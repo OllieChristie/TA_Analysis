@@ -16,7 +16,7 @@ from matplotlib.widgets import RectangleSelector
 from scipy.interpolate import interpn
 import os
 
-class ContourApp:
+class BackgroundSubtractionApp:
     def __init__(self, root):
         
         #----------------------------------------------------------------------
@@ -43,6 +43,7 @@ class ContourApp:
         self.zoom = 0
         self.retain_colorbar = 0
         self.norm = None
+        self.BlankScaling = 1
         
         # Default root properties
         #----------------------------------------------------------------------
@@ -165,6 +166,24 @@ class ContourApp:
         
         self.timeoffset_step_spinbox.bind('<Return>', lambda event: self.update_time_offset()) #Allows manual input of wavelengths
         self.timeoffset_step_spinbox.pack()
+        
+        # Spinbox scaling blank
+        self.BlankScale_Label = ttk.Label(self.timeoffset_step_Frame, text='Blank Scaling')
+        self.BlankScale_Label.pack()
+        
+        self.BlankScale_step = tk.DoubleVar() 
+        self.BlankScale_min = -10
+        self.BlankScale_max = 10
+        self.BlankScale_spinbox = ttk.Spinbox(self.timeoffset_step_Frame,
+                                                   from_=self.BlankScale_min, to=self.BlankScale_max,
+                                                   textvariable=self.BlankScale_step,
+                                                   command=self.update_BlankScaling,
+                                                   increment=0.05) # May cause issues if data wavelength points are more widely spaced than increment
+        
+        self.BlankScale_spinbox.bind('<Return>', lambda event: self.update_BlankScaling()) #Allows manual input of blank scaling
+        self.BlankScale_spinbox.pack()
+        
+        #----------------------------------------------------------------------
         
         #Contour control
         #----------------------------------------------------------------------
@@ -345,6 +364,7 @@ class ContourApp:
             self.wavelength_step_spinbox.config(from_=self.spinbox_min, to=self.spinbox_max)
             
             self.Refdata = RefSpectra  # Placeholder for actual data loading
+            self.Refdata0 = RefSpectra
             self.zoomed_ref = self.Refdata # Initialise for zooming
 
             
@@ -387,7 +407,7 @@ class ContourApp:
             gradient = LinearSegmentedColormap.from_list('custom_cmap', [(0, 'violet'), (zeroPoint-(zeroPoint/2), 'blue'), (zeroPoint, 'Black'), (zeroPoint+((1-zeroPoint)/2), 'red'), (1, 'yellow')])
             
             X, Y = np.meshgrid(self.Wavelength, self.time)
-            self.cp1 = self.ax1.contourf(X, Y, self.data, 50, cmap = gradient)
+            self.cp1 = self.ax1.contourf(X, Y, self.data, 500, cmap = gradient)
             self.ax1.contour(X, Y, self.data, self.nContours, colors='black', linewidths=1)
             self.colorbar1 = self.fig1.colorbar(self.cp1, ax=self.ax1)
             self.ax1.set_xlim(np.min(self.Wavelength), np.max(self.Wavelength))
@@ -413,7 +433,7 @@ class ContourApp:
         #catch Type Error and clear reference
         #----------------------------------------------------------------------
         try:
-            bckgSubtractedSpec = self.data-self.Refdata
+            bckgSubtractedSpec = self.data-self.BlankScaling*self.Refdata
         except TypeError:
             self.ax2.clear()
             self.Refdata = None
@@ -444,11 +464,11 @@ class ContourApp:
             gradient = self.gradient
         
         if self.norm is None:
-            self.cp2 = self.ax2.contourf(X, Y, Spectra, 50, cmap = gradient)
+            self.cp2 = self.ax2.contourf(X, Y, Spectra, 500, cmap = gradient)
             self.ax2.contour(X, Y, Spectra, self.nContours, colors='black', linewidths=1)
             self.colorbar2 = self.fig2.colorbar(self.cp2, ax=self.ax2)
         else:
-            self.cp2 = self.ax2.contourf(X, Y, Spectra, 50, cmap = gradient, norm = self.norm)
+            self.cp2 = self.ax2.contourf(X, Y, Spectra, 500, cmap = gradient, norm = self.norm)
             self.ax2.contour(X, Y, Spectra, self.nContours, colors='black', linewidths=1)
             self.colorbar2 = self.fig2.colorbar(self.cp2, ax=self.ax2)
         
@@ -632,15 +652,24 @@ class ContourApp:
         self.retain_colorbar = 1 
         self.plot_difference_contour()
         self.retain_colorbar = 0
-
-        # self.update_colorscale()
+        
+    def update_BlankScaling(self):
+        self.BlankScaling = self.BlankScale_step.get()
+        self.Refdata = self.BlankScaling*self.Refdata0
+        self.plot_difference_contour()
+        self.update_slice()
+        
         
     def update_colorscale(self):
-        data = self.BackgroundSubtraction[self.zoomlowerYInd:self.zoomupperYInd, self.zoomlowerXInd:self.zoomupperXInd]
-        self.norm = Normalize(vmin=np.min(data), vmax=np.max(data))
+        Spectrum0 = self.BackgroundSubtraction[self.zoomlowerYInd:self.zoomupperYInd, self.zoomlowerXInd:self.zoomupperXInd]
+        vmin = np.min(Spectrum0)
+        vmax = np.max(Spectrum0)
+        self.norm = Normalize(vmin=vmin, vmax=vmax)
         self.cp2.set_norm(self.norm)
         self.find_zeropoint()
-        self.gradient = LinearSegmentedColormap.from_list('custom_cmap', [(0, 'violet'), (self.zeroPoint-(self.zeroPoint/3), 'blue'), (self.zeroPoint, 'Black'), (self.zeroPoint+((1-self.zeroPoint)/3), 'red'), (1, 'yellow')])
+        self.gradient = LinearSegmentedColormap.from_list('custom_cmap', [(0, 'violet'), (self.zeroPoint-(self.zeroPoint/2), 'blue'), (self.zeroPoint, 'Black'), (self.zeroPoint+((1-self.zeroPoint)/2), 'red'), (1, 'yellow')])
+        self.gradient.set_over('none')  # Set color for values above vmax
+        self.gradient.set_under('none')  
         self.cp2.set_cmap(self.gradient)
         self.colorbar2.update_normal(self.cp2)
         self.canvas2.draw()
@@ -658,27 +687,23 @@ class ContourApp:
         if self.zoom == 0:
             
             Spectrum0 = self.BackgroundSubtraction
-            normalisedSpectrum = Spectrum0/np.max(Spectrum0)
-            minSpec = np.min(normalisedSpectrum)
-            
-            zeroAlignedSpectrum = normalisedSpectrum-minSpec
-            zeroPoint = abs(minSpec/np.max(zeroAlignedSpectrum))
-            self.zeroPoint = zeroPoint
             
         else:
             
             Spectrum0 = self.BackgroundSubtraction[self.zoomlowerYInd:self.zoomupperYInd, self.zoomlowerXInd:self.zoomupperXInd]
-            normalisedSpectrum = Spectrum0/np.max(Spectrum0)
-            minSpec = np.min(normalisedSpectrum)
             
-            zeroAlignedSpectrum = normalisedSpectrum+abs(minSpec)
-            zeroPoint = abs(minSpec/np.max(zeroAlignedSpectrum))
-            self.zeroPoint = zeroPoint
+        normalisedSpectrum = Spectrum0/np.max(Spectrum0)
+        minSpec = np.min(normalisedSpectrum)
         
+        zeroAlignedSpectrum = normalisedSpectrum-minSpec
+        zeroPoint = abs(minSpec/np.max(zeroAlignedSpectrum))
+        self.zeroPoint = zeroPoint
         
+    def RunCode(self):
+        self.root.mainloop()
         
-class RunCode:     
-    # if __name__ == "__main__":
-        root = tk.Tk()
-        app = ContourApp(root)
-        root.mainloop()
+# class RunCode:     
+#     # if __name__ == "__main__":
+#         root = tk.Tk()
+#         app = BackgroundSubtractionApp(root)
+#         root.mainloop()
